@@ -28,7 +28,7 @@ class CarState(CarStateBase):
       if CP.transmissionType == TransmissionType.cvt:
         self.gearbox_msg = "GEARBOX_CVT"
       self.shifter_values = can_define.dv[self.gearbox_msg]["GEAR_SHIFTER"]
-
+    
     self.car_state_scm_msg = "SCM_FEEDBACK"
     if CP.carFingerprint in HONDA_NIDEC_ALT_SCM_MESSAGES:
       self.car_state_scm_msg = "SCM_BUTTONS"
@@ -58,6 +58,14 @@ class CarState(CarStateBase):
       cp_body = can_parsers[Bus.body]
 
     ret = structs.CarState()
+
+    if not hasattr(self, "_dbg"):
+      self._dbg = 0
+
+    if self._dbg < 5:
+      print("CAN KEYS:", sorted(cp.vl.keys()))
+      print("CAN VALID:", cp.can_valid)
+      self._dbg += 1
 
     # car params
     v_weight_v = [0., 1.]  # don't trust smooth speed at low values to avoid premature zero snapping
