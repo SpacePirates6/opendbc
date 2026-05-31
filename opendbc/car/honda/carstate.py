@@ -28,7 +28,7 @@ class CarState(CarStateBase):
       if CP.transmissionType == TransmissionType.cvt:
         self.gearbox_msg = "GEARBOX_CVT"
       self.shifter_values = can_define.dv[self.gearbox_msg]["GEAR_SHIFTER"]
-    
+
     self.car_state_scm_msg = "SCM_FEEDBACK"
     if CP.carFingerprint in HONDA_NIDEC_ALT_SCM_MESSAGES:
       self.car_state_scm_msg = "SCM_BUTTONS"
