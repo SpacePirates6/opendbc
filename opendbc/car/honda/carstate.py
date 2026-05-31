@@ -63,7 +63,7 @@ class CarState(CarStateBase):
       self._dbg = 0
 
     if self._dbg < 5:
-      print("CAN KEYS:", sorted(cp.vl.keys()))
+      print("CAN KEYS:", list(cp.vl.keys()))
       print("CAN VALID:", cp.can_valid)
       self._dbg += 1
 
