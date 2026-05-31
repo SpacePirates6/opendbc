@@ -33,8 +33,8 @@ class MessageState:
   size: int
   signals: list[Signal]
   ignore_alive: bool = False
-  ignore_checksum: bool = False
-  ignore_counter: bool = False
+  ignore_checksum: bool = True
+  ignore_counter: bool = True
   frequency: float = 0.0
   timeout_threshold: float = 1e5  # default to 1Hz threshold
   vals: list[float] = field(default_factory=list)
