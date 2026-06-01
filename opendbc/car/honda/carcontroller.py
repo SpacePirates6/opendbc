@@ -14,6 +14,7 @@ from opendbc.car.interfaces import CarControllerBase
 from opendbc.car.common.pid import PIDController
 
 from openpilot.selfdrive.controls.lib.chauffeur_stop import apply_chauffeur_stop, in_chauffeur_zone, is_chauffeur_stop_enabled, CHAUFFEUR_MAX_SPEED
+from openpilot.selfdrive.controls.lib.gas_override_smooth import GasOverrideSmooth, is_gas_override_smooth_enabled
 
 from opendbc.sunnypilot.car.honda.mads import MadsCarController
 from opendbc.sunnypilot.car.honda.gas_interceptor import GasInterceptorCarController
@@ -164,9 +165,12 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
                                    neg_limit=-2.0,
                                    rate=50)
     self.brake_pid.reset()
+    self.gas_override_smooth = GasOverrideSmooth()
 
   def update(self, CC, CC_SP, CS, now_nanos):
     MadsCarController.update(self, self.CP, CC, CC_SP)
+    if is_gas_override_smooth_enabled():
+      self.gas_override_smooth.update(CS.out.gasPressed)
     gas_pedal_force = 0.0
     min_gas = self.params.BOSCH_GAS_LOOKUP_BP[0]
     actuators = CC.actuators
@@ -301,11 +305,17 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
                                                v_forward=0.0, stop_accel=self.params.BOSCH_ACCEL_MIN,
                                                accel_min=self.params.BOSCH_ACCEL_MIN, stopping=stopping)
 
+          if is_gas_override_smooth_enabled() and CC.longActive:
+            targetaccel = self.gas_override_smooth.smooth_accel(targetaccel, CS.out.aEgo)
           self.accel = float(np.clip(targetaccel, self.params.BOSCH_ACCEL_MIN, self.params.BOSCH_ACCEL_MAX))
           gas_pedal_force = self.accel + wind_brake_ms2 * self.windfactor + hill_brake
 
+          if is_gas_override_smooth_enabled():
+            self.gasfactor = self.gas_override_smooth.decay_gasfactor(self.gasfactor)
+
           # live-learn gas pedal adjustments when openpilot is controlling gas
-          if (actuators.longControlState == LongCtrlState.pid) and (not CS.out.gasPressed):
+          if (actuators.longControlState == LongCtrlState.pid) and (not CS.out.gasPressed) and \
+             (not is_gas_override_smooth_enabled() or self.gas_override_smooth.allow_gasfactor_learning()):
             gas_error = self.accel - CS.out.aEgo
             if gas_error != 0.0 and gas_pedal_force > min_gas:
               if self.CP.carFingerprint == CAR.HONDA_INSIGHT: # Insight gas pedal reacts too slowly
@@ -335,7 +345,8 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
           self.gas = float(np.interp(gas_pedal_force * self.gasfactor, self.params.BOSCH_GAS_LOOKUP_BP, self.params.BOSCH_GAS_LOOKUP_V))
 
           # limit gas ramp to 60 units per frame, matches stock.  Higher sometimes causes powertrain to ignore gas command.
-          max_gas = max(60, self.bosch_last_gas + 60)
+          gas_ramp = self.gas_override_smooth.recovery_gas_ramp(60) if is_gas_override_smooth_enabled() else 60
+          max_gas = max(gas_ramp, self.bosch_last_gas + gas_ramp)
           self.gas = min(self.gas, max_gas)
           self.bosch_last_gas = self.gas
 
@@ -354,8 +365,15 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
           self.apply_brake_last = apply_brake
           self.brake = apply_brake / self.params.NIDEC_BRAKE_MAX
 
+          if is_gas_override_smooth_enabled() and CC.longActive:
+            smoothed_accel = self.gas_override_smooth.smooth_accel(actuators.accel, CS.out.aEgo)
+            gas, brake = compute_gas_brake(smoothed_accel + hill_brake, CS.out.vEgo, self.CP.carFingerprint)
+
           gas_error = actuators.accel - CS.out.aEgo
-          if (not CS.out.gasPressed) and (actuators.longControlState == LongCtrlState.pid) and self.CP_SP.enableGasInterceptor:
+          if is_gas_override_smooth_enabled():
+            self.gasfactor = self.gas_override_smooth.decay_gasfactor(self.gasfactor)
+          if (not CS.out.gasPressed) and (actuators.longControlState == LongCtrlState.pid) and self.CP_SP.enableGasInterceptor and \
+             (not is_gas_override_smooth_enabled() or self.gas_override_smooth.allow_gasfactor_learning()):
             if gas_error != 0.0 and gas > 0.0:
               self.gasfactor = np.clip(self.gasfactor + gas_error / 150 * (gas * 4.8), 0.1, 3.0)
             if gas_error != 0.0 and (not CS.out.brakePressed) and (CS.out.vEgo > 0.0):
