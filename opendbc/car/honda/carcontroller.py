@@ -13,6 +13,8 @@ from opendbc.car.honda.values import CAR, CruiseButtons, HONDA_BOSCH, HONDA_BOSC
 from opendbc.car.interfaces import CarControllerBase
 from opendbc.car.common.pid import PIDController
 
+from openpilot.selfdrive.controls.lib.chauffeur_stop import apply_chauffeur_stop, in_chauffeur_zone, is_chauffeur_stop_enabled, CHAUFFEUR_MAX_SPEED
+
 from opendbc.sunnypilot.car.honda.mads import MadsCarController
 from opendbc.sunnypilot.car.honda.gas_interceptor import GasInterceptorCarController
 from opendbc.sunnypilot.car.honda.icbm import IntelligentCruiseButtonManagementInterface
@@ -195,7 +197,13 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
                                                                            CS.out.vEgo, self.CP.carFingerprint)
 
     # *** rate limit after the enable check ***
-    self.brake_last = rate_limit(pre_limit_brake, self.brake_last, -2., 3 * DT_CTRL)
+    if is_chauffeur_stop_enabled() and in_chauffeur_zone(CS.out.vEgo):
+      brake_up_step = 0.8 * DT_CTRL
+      brake_down_step = -0.4 * DT_CTRL
+    else:
+      brake_up_step = 3 * DT_CTRL
+      brake_down_step = -2.
+    self.brake_last = rate_limit(pre_limit_brake, self.brake_last, brake_down_step, brake_up_step)
 
     # vehicle hud display, wait for one update from 10Hz 0x304 msg
     alert_fcw, alert_steer_required = process_hud_alert(hud_control.visualAlert)
@@ -277,10 +285,21 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
         if self.CP.carFingerprint in HONDA_BOSCH:
           if (accel < 0) and (CS.out.vEgo > 1e-3):
             brake_addon = self.brake_pid.update(error = accel - CS.out.aEgo, speed = CS.out.vEgo)
+            if is_chauffeur_stop_enabled() and in_chauffeur_zone(CS.out.vEgo):
+              chauffeur_scale = float(np.interp(CS.out.vEgo, [0.0, CHAUFFEUR_MAX_SPEED], [0.15, 1.0]))
+              brake_addon *= chauffeur_scale
             targetaccel = min(accel,accel + brake_addon)
           else:
             self.brake_pid.reset()
             targetaccel = accel
+
+          stopping = actuators.longControlState == LongCtrlState.stopping
+          if is_chauffeur_stop_enabled() and in_chauffeur_zone(CS.out.vEgo) and targetaccel < 0.0:
+            roll = CC.orientationNED[0] if len(CC.orientationNED) == 3 else 0.0
+            targetaccel = apply_chauffeur_stop(targetaccel, CS.out.vEgo, CS.out.aEgo,
+                                               self.accel, DT_CTRL, pitch=self.pitch, roll=roll,
+                                               v_forward=0.0, stop_accel=self.params.BOSCH_ACCEL_MIN,
+                                               accel_min=self.params.BOSCH_ACCEL_MIN, stopping=stopping)
 
           self.accel = float(np.clip(targetaccel, self.params.BOSCH_ACCEL_MIN, self.params.BOSCH_ACCEL_MAX))
           gas_pedal_force = self.accel + wind_brake_ms2 * self.windfactor + hill_brake
@@ -320,7 +339,6 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
           self.gas = min(self.gas, max_gas)
           self.bosch_last_gas = self.gas
 
-          stopping = actuators.longControlState == LongCtrlState.stopping
           self.stopping_counter = self.stopping_counter + 1 if stopping else 0
           can_sends.extend(hondacan.create_acc_commands(self.packer, self.CAN, CC.enabled, CC.longActive, self.accel, self.gas,
                                                         self.stopping_counter, self.CP.carFingerprint, gas_pedal_force))
