@@ -170,6 +170,8 @@ class CarState(CarStateBase, CarStateExt):
     else:
       gear_position = self.shifter_values.get(cp.vl[self.gearbox_msg]["GEAR_SHIFTER"], None)
       ret.gearShifter = self.parse_gear_shifter(gear_position)
+      if "TRANS_TARGET_GEAR" in cp.vl[self.gearbox_msg]:
+        ret.currentGear = int(cp.vl[self.gearbox_msg]["TRANS_TARGET_GEAR"])
 
     ret.gasPressed = cp.vl["POWERTRAIN_DATA"]["PEDAL_GAS"] > 1e-5
 
@@ -224,9 +226,13 @@ class CarState(CarStateBase, CarStateExt):
     if self.initial_accFault_cleared_timer > 0:
       self.initial_accFault_cleared_timer -= 1
 
-    # Gets rid of Pedal Grinding noise when brake is pressed at slow speeds for some models
+    # Catch light pedal presses that don't trigger the brake switch to prevent
+    # grinding noise when OP gases against a lightly-held brake.  Skip at
+    # standstill: OP's own Nidec brake hold elevates USER_BRAKE, which would
+    # keep brakePressed stuck True after the driver lifts their foot and block
+    # the transition out of stopping state.
     if self.CP.carFingerprint in (CAR.HONDA_PILOT, CAR.HONDA_RIDGELINE):
-      if ret.brake > 0.1:
+      if ret.brake > 0.1 and not ret.standstill:
         ret.brakePressed = True
 
     if self.CP.carFingerprint in HONDA_BOSCH:

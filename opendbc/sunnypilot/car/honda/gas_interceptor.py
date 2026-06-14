@@ -31,7 +31,7 @@ class GasInterceptorCarController:
       # This prevents unexpected pedal range rescaling
       # Sending non-zero gas when OP is not enabled will cause the PCM not to respond to throttle as expected
       # when you do enable.
-      if CC.longActive:
+      if CC.longActive and not CS.out.brakePressed:
         self.gas = float(np.clip(gas_mult * (gas - brake + wind_brake * 3 / 4), 0., 1.))
       else:
         self.gas = 0.0
