@@ -33,8 +33,8 @@ class GasInterceptorCarController:
       # when you do enable.
       if CC.longActive and not CS.out.brakePressed:
         self.gas = float(np.clip(gas_mult * (gas - brake + wind_brake * 3 / 4), 0., 1.))
+        can_sends.append(create_gas_interceptor_command(packer, self.gas, frame // 2))
       else:
         self.gas = 0.0
-      can_sends.append(create_gas_interceptor_command(packer, self.gas, frame // 2))
 
     return can_sends

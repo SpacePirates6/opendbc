@@ -8,7 +8,7 @@ from openpilot.common.params import Params
 from opendbc.can import CANPacker
 from opendbc.car import ACCELERATION_DUE_TO_GRAVITY, Bus, DT_CTRL, rate_limit, make_tester_present_msg, structs
 from opendbc.car.honda import hondacan
-from opendbc.car.honda.values import CAR, CruiseButtons, HONDA_BOSCH, HONDA_BOSCH_CANFD, HONDA_BOSCH_RADARLESS, \
+from opendbc.car.honda.values import CAR, CruiseButtons, GearShifter, HONDA_BOSCH, HONDA_BOSCH_CANFD, HONDA_BOSCH_RADARLESS, \
                                      HONDA_BOSCH_TJA_CONTROL, HONDA_NIDEC_ALT_PCM_ACCEL, CarControllerParams
 from opendbc.car.interfaces import CarControllerBase
 from opendbc.car.common.pid import PIDController
@@ -362,10 +362,13 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
           apply_brake = int(np.clip(apply_brake * self.params.NIDEC_BRAKE_MAX, 0, self.params.NIDEC_BRAKE_MAX - 1))
           pump_on, self.last_pump_ts = brake_pump_hysteresis(apply_brake, self.apply_brake_last, self.last_pump_ts, ts)
 
-          pcm_override = True
-          can_sends.append(hondacan.create_brake_command(self.packer, self.CAN, apply_brake, pump_on,
-                                                         pcm_override, pcm_cancel_cmd, alert_fcw,
-                                                         self.CP.carFingerprint, CS.stock_brake, self.CP_SP))
+          pcm_override = CC.longActive
+          # Avoid CRUISE_OVERRIDE on BRAKE_COMMAND while disengaged in park/reverse — the PCM/TCM
+          # can fault the transmission if cruise claims authority with the engine off.
+          if CC.longActive or CS.out.gearShifter not in (GearShifter.park, GearShifter.reverse):
+            can_sends.append(hondacan.create_brake_command(self.packer, self.CAN, apply_brake, pump_on,
+                                                           pcm_override, pcm_cancel_cmd, alert_fcw,
+                                                           self.CP.carFingerprint, CS.stock_brake, self.CP_SP))
           self.apply_brake_last = apply_brake
           self.brake = apply_brake / self.params.NIDEC_BRAKE_MAX
 
